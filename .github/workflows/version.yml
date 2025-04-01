@@ -1,0 +1,168 @@
+name: Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: 'File(s) to run action against (space separated)'
+        required: true
+  pull_request:
+    branches: ["master"]
+  push:
+    branches: ["master"]
+    paths:
+    - '*.txt'
+    - '*.json'
+    - '*.png'
+    - '.github/workflows/version.yml'
+
+env:
+  PYTHON_VERSION: "3.10"
+  COSIGN_VERSION: "v2.2.3"
+  SIGNED_FILES: "apparmor.txt apparmor_beta.txt apparmor_dev.txt apparmor_stable.txt beta.json dev.json stable.json"
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout the repository
+      uses: actions/checkout@v4
+
+    - name: Lint with JQ
+      uses: home-assistant-cn/actions/helpers/jq@master
+
+  prepare:
+    name: Prepare
+    needs: ["lint"]
+    runs-on: ubuntu-latest
+    outputs:
+      files: ${{ steps.calc_file_list.outputs.changed_files }}
+      sign_matrix: ${{ steps.calc_file_list.outputs.result }}
+    steps:
+    - name: Checkout the repository
+      uses: actions/checkout@v4
+
+    - name: Get changed files for push
+      if: github.event_name == 'push'
+      id: changed_files_push
+      uses: masesgroup/retrieve-changed-files@v3.0.0
+      with:
+        format: 'json'
+
+    - name: Calculate files to sign and push
+      uses: actions/github-script@v7
+      id: calc_file_list
+      with:
+        script: |
+          const signed_files = "${{ env.SIGNED_FILES }}".split(' ')
+          if ("${{ github.event_name }}" === "push") {
+            changed_files = JSON.parse('${{ steps.changed_files_push.outputs.all }}')
+            // Sign all files in case this workflow changes.
+            if (changed_files.includes(".github/workflows/version.yml")) {
+              changed_files = [...new Set([...changed_files, ...signed_files])]
+            }
+            core.setOutput("changed_files", changed_files.join(' '))
+            return changed_files.filter(value => signed_files.includes(value))
+          } else {
+            input_files = "${{ github.event.inputs.files }}".split(' ')
+            core.setOutput("changed_files", input_files.join(' '))
+            return input_files.filter(value => signed_files.includes(value))
+          }
+
+  signing:
+    name: Sign ${{ matrix.path }}
+    needs: ["prepare"]
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.prepare.outputs.sign_matrix != '[]' }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      packages: write
+    strategy:
+      matrix:
+        path: ${{ fromJson(needs.prepare.outputs.sign_matrix) }}
+    steps:
+      - name: Checkout the repository
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3.4.0
+        with:
+          registry: ghcr.io
+          username: home-assistant-cn
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@main
+        with:
+          cosign-release: ${{ env.COSIGN_VERSION }}
+
+      - name: Setup Python version ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install AWS CLI
+        run: pip install awscli
+
+      - name: Sign Cosign
+        run: |
+          cosign sign-blob --yes ${{ matrix.path }} --bundle ${{ matrix.path }}.sig
+
+      - name: Upload signature
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws s3 sync . s3://version.home-assistant.xin --exclude "*" --include "${{ matrix.path }}.sig"
+
+
+  upload:
+    name: Upload
+    needs: ["signing", "prepare"]
+    # Make sure to run this job even if signing has been skipped.
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout the repository
+      uses: actions/checkout@v4
+
+    - name: Setup Python version ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install AWS CLI
+      run: pip install awscli
+
+    - name: Upload files
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      run: |
+        for file in ${{ needs.prepare.outputs.files }}; do
+          if [[ "$file" =~ \.txt|\.json|\.png ]]; then
+            aws s3 sync . s3://version.home-assistant.xin --exclude "*" --include "$file"
+          fi
+        done
+
+    - name: Gather files for cache flush
+      id: flush
+      run: |
+        declare -a files
+        for file in ${{ needs.prepare.outputs.files }}; do
+          if [[ "$file" =~ \.txt|\.json ]]; then
+            files+=("\"https:\/\/version.home-assistant.xin\/$file\", ")
+            if [[ "${{ env.SIGNED_FILES }}" =~ $file ]]; then
+              files+=("\"https:\/\/version.home-assistant.xin\/$file.sig\", ")
+            fi
+          fi
+        done
+        echo "files=[$(echo ${files[@]} | rev | cut -c 2- | rev)]" >> $GITHUB_OUTPUT
+
+    - name: Flush CloudFlare cache
+      run: |
+        curl --silent --show-error --fail -X POST \
+          "https://api.cloudflare.com/client/v4/zones/${{ secrets.CF_ZONE }}/purge_cache" \
+          -H "Authorization: Bearer ${{ secrets.CF_PURGE_TOKEN }}" \
+          -H "Content-Type: application/json" \
+          --data '{"files": ${{ steps.flush.outputs.files }}}'
