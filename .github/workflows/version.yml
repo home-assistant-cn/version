@@ -85,6 +85,17 @@ jobs:
       - name: Checkout the repository
         uses: actions/checkout@v4
 
+      - name: Check and modify JSON files if needed
+        if: contains(matrix.path, 'stable.json') || contains(matrix.path, 'beta.json')
+        run: |
+          if [ -f "${{ matrix.path }}" ]; then
+            # Replace the domain in the file
+            sed -i 's/os-artifacts.home-assistant.io/os-artifacts.home-assistant.xin/g' "${{ matrix.path }}"
+            echo "Modified ${{ matrix.path }} to use new domain"
+          else
+            echo "File ${{ matrix.path }} not found"
+          fi
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3.4.0
         with:
@@ -125,6 +136,20 @@ jobs:
     steps:
     - name: Checkout the repository
       uses: actions/checkout@v4
+
+    - name: Check and modify JSON files if needed
+      run: |
+        for file in ${{ needs.prepare.outputs.files }}; do
+          if [[ "$file" == "stable.json" || "$file" == "beta.json" ]]; then
+            if [ -f "$file" ]; then
+              # Replace the domain in the file
+              sed -i 's/os-artifacts.home-assistant.io/os-artifacts.home-assistant.xin/g' "$file"
+              echo "Modified $file to use new domain"
+            else
+              echo "File $file not found"
+            fi
+          fi
+        done
 
     - name: Setup Python version ${{ env.PYTHON_VERSION }}
       uses: actions/setup-python@v5
