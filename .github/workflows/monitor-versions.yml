@@ -6,8 +6,8 @@ on:
       - 'stable.json'
 
 env:
-  ALIYUN_REGISTRY: ${{ secrets.CN_REGISTRY }}
-  ALIYUN_NAMESPACE: ${{ secrets.CN_REGISTRY_SPACE }}
+  CN_REGISTRY: ${{ secrets.CN_REGISTRY }}
+  CN_NAMESPACE: ${{ secrets.CN_REGISTRY_SPACE }}
 
 jobs:
   monitor:
@@ -123,7 +123,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Login to Aliyun
+      - name: Login to Registry
         uses: docker/login-action@v2
         with:
           registry: ${{ env.CN_REGISTRY }}
@@ -178,7 +178,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Login to Aliyun
+      - name: Login to Registry
         uses: docker/login-action@v2
         with:
           registry: ${{ env.CN_REGISTRY }}
