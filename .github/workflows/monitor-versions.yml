@@ -1,0 +1,237 @@
+name: Monitor and Sync Home Assistant Versions
+
+on:
+  push:
+    paths:
+      - 'stable.json'
+
+env:
+  ALIYUN_REGISTRY: ${{ secrets.CN_REGISTRY }}
+  ALIYUN_NAMESPACE: ${{ secrets.CN_REGISTRY_SPACE }}
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    outputs:
+      homeassistant_version_changed: ${{ steps.compare.outputs.homeassistant_version_changed }}
+      new_homeassistant_version: ${{ steps.compare.outputs.new_homeassistant_version }}
+      cli_version_changed: ${{ steps.compare.outputs.cli_version_changed }}
+      new_cli_version: ${{ steps.compare.outputs.new_cli_version }}
+      dns_version_changed: ${{ steps.compare.outputs.dns_version_changed }}
+      new_dns_version: ${{ steps.compare.outputs.new_dns_version }}
+      audio_version_changed: ${{ steps.compare.outputs.audio_version_changed }}
+      new_audio_version: ${{ steps.compare.outputs.new_audio_version }}
+      multicast_version_changed: ${{ steps.compare.outputs.multicast_version_changed }}
+      new_multicast_version: ${{ steps.compare.outputs.new_multicast_version }}
+      observer_version_changed: ${{ steps.compare.outputs.observer_version_changed }}
+      new_observer_version: ${{ steps.compare.outputs.new_observer_version }}
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+
+    - name: Compare versions
+      id: compare
+      run: |
+        CURRENT=$(cat stable.json)
+        PREVIOUS=$(git show HEAD^:stable.json 2>/dev/null || echo "{}")
+
+        extract_version() {
+          echo "$1" | jq -r "$2" || echo ""
+        }
+
+        CURRENT_HA=$(extract_version "$CURRENT" '.homeassistant.default')
+        CURRENT_CLI=$(extract_version "$CURRENT" '.cli')
+        CURRENT_DNS=$(extract_version "$CURRENT" '.dns')
+        CURRENT_AUDIO=$(extract_version "$CURRENT" '.audio')
+        CURRENT_MULTICAST=$(extract_version "$CURRENT" '.multicast')
+        CURRENT_OBSERVER=$(extract_version "$CURRENT" '.observer')
+
+        PREVIOUS_HA=$(extract_version "$PREVIOUS" '.homeassistant.default')
+        PREVIOUS_CLI=$(extract_version "$PREVIOUS" '.cli')
+        PREVIOUS_DNS=$(extract_version "$PREVIOUS" '.dns')
+        PREVIOUS_AUDIO=$(extract_version "$PREVIOUS" '.audio')
+        PREVIOUS_MULTICAST=$(extract_version "$PREVIOUS" '.multicast')
+        PREVIOUS_OBSERVER=$(extract_version "$PREVIOUS" '.observer')
+
+        if [ "$CURRENT_HA" != "$PREVIOUS_HA" ] && [ -n "$CURRENT_HA" ]; then
+          echo "homeassistant_version_changed=true" >> $GITHUB_OUTPUT
+          echo "new_homeassistant_version=$CURRENT_HA" >> $GITHUB_OUTPUT
+        fi
+
+        if [ "$CURRENT_CLI" != "$PREVIOUS_CLI" ] && [ -n "$CURRENT_CLI" ]; then
+          echo "cli_version_changed=true" >> $GITHUB_OUTPUT
+          echo "new_cli_version=$CURRENT_CLI" >> $GITHUB_OUTPUT
+        fi
+
+        if [ "$CURRENT_DNS" != "$PREVIOUS_DNS" ] && [ -n "$CURRENT_DNS" ]; then
+          echo "dns_version_changed=true" >> $GITHUB_OUTPUT
+          echo "new_dns_version=$CURRENT_DNS" >> $GITHUB_OUTPUT
+        fi
+
+        if [ "$CURRENT_AUDIO" != "$PREVIOUS_AUDIO" ] && [ -n "$CURRENT_AUDIO" ]; then
+          echo "audio_version_changed=true" >> $GITHUB_OUTPUT
+          echo "new_audio_version=$CURRENT_AUDIO" >> $GITHUB_OUTPUT
+        fi
+
+        if [ "$CURRENT_MULTICAST" != "$PREVIOUS_MULTICAST" ] && [ -n "$CURRENT_MULTICAST" ]; then
+          echo "multicast_version_changed=true" >> $GITHUB_OUTPUT
+          echo "new_multicast_version=$CURRENT_MULTICAST" >> $GITHUB_OUTPUT
+        fi
+
+        if [ "$CURRENT_OBSERVER" != "$PREVIOUS_OBSERVER" ] && [ -n "$CURRENT_OBSERVER" ]; then
+          echo "observer_version_changed=true" >> $GITHUB_OUTPUT
+          echo "new_observer_version=$CURRENT_OBSERVER" >> $GITHUB_OUTPUT
+        fi
+
+  sync_homeassistant:
+    needs: monitor
+    if: ${{ needs.monitor.outputs.homeassistant_version_changed == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch:
+          - 'home-assistant'
+          - 'amd64-homeassistant'
+          - 'i386-homeassistant'
+          - 'armhf-homeassistant'
+          - 'armv7-homeassistant'
+          - 'aarch64-homeassistant'
+          - 'generic-x86-64-homeassistant'
+          - 'intel-nuc-homeassistant'
+          - 'khadas-vim3-homeassistant'
+          - 'odroid-c2-homeassistant'
+          - 'odroid-c4-homeassistant'
+          - 'odroid-m1-homeassistant'
+          - 'odroid-n2-homeassistant'
+          - 'odroid-xu-homeassistant'
+          - 'qemuarm-homeassistant'
+          - 'qemuarm-64-homeassistant'
+          - 'qemux86-homeassistant'
+          - 'qemux86-64-homeassistant'
+          - 'raspberrypi-homeassistant'
+          - 'raspberrypi2-homeassistant'
+          - 'raspberrypi3-homeassistant'
+          - 'raspberrypi3-64-homeassistant'
+          - 'raspberrypi4-homeassistant'
+          - 'raspberrypi4-64-homeassistant'
+          - 'raspberrypi5-64-homeassistant'
+          - 'tinker-homeassistant'
+          - 'yellow-homeassistant'
+          - 'green-homeassistant'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Aliyun
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.CN_REGISTRY }}
+          username: ${{ secrets.CN_USERNAME }}
+          password: ${{ secrets.CN_PASSWORD }}
+
+      - name: Process Home Assistant image
+        run: |
+          version="${{ needs.monitor.outputs.new_homeassistant_version }}"
+          SRC_IMAGE="ghcr.io/home-assistant/${{ matrix.arch }}"
+          DEST_IMAGE="${{ env.CN_REGISTRY }}/${{ env.CN_REGISTRY_SPACE }}/${{ matrix.arch }}"
+
+          echo "Processing ${{ matrix.arch }} version $version"
+          
+          if ! docker pull "${SRC_IMAGE}:${version}"; then
+            echo "::warning::Skipping ${{ matrix.arch }}:${version} - image not found"
+            exit 0
+          fi
+
+          docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:${version}"
+          docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:latest"
+
+          if [ "${{ matrix.arch }}" = "home-assistant" ]; then
+            ym_tag=$(echo "${version}" | awk -F. '{print $1"."$2}')
+            docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:stable"
+            docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:${ym_tag}"
+          fi
+
+          docker push "${DEST_IMAGE}:${version}"
+          docker push "${DEST_IMAGE}:latest"
+          
+          if [ "${{ matrix.arch }}" = "home-assistant" ]; then
+            docker push "${DEST_IMAGE}:stable"
+            docker push "${DEST_IMAGE}:${ym_tag}"
+          fi
+
+          docker rmi "${SRC_IMAGE}:${version}" || true
+          echo "::notice::Successfully synced ${{ matrix.arch }}:$version"
+
+  sync_hassio_components:
+    needs: monitor
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component:
+          - ${{ fromJSON(needs.monitor.outputs.cli_version_changed == 'true' && '["cli"]' || '[]') }}
+          - ${{ fromJSON(needs.monitor.outputs.dns_version_changed == 'true' && '["dns"]' || '[]') }}
+          - ${{ fromJSON(needs.monitor.outputs.audio_version_changed == 'true' && '["audio"]' || '[]') }}
+          - ${{ fromJSON(needs.monitor.outputs.multicast_version_changed == 'true' && '["multicast"]' || '[]') }}
+          - ${{ fromJSON(needs.monitor.outputs.observer_version_changed == 'true' && '["observer"]' || '[]') }}
+        arch: ['amd64', 'i386', 'armhf', 'armv7', 'aarch64']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Aliyun
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.CN_REGISTRY }}
+          username: ${{ secrets.CN_USERNAME }}
+          password: ${{ secrets.CN_PASSWORD }}
+
+      - name: Get component version
+        id: get_version
+        run: |
+          case "${{ matrix.component }}" in
+            "cli")
+              echo "version=${{ needs.monitor.outputs.new_cli_version }}" >> $GITHUB_OUTPUT
+              ;;
+            "dns")
+              echo "version=${{ needs.monitor.outputs.new_dns_version }}" >> $GITHUB_OUTPUT
+              ;;
+            "audio")
+              echo "version=${{ needs.monitor.outputs.new_audio_version }}" >> $GITHUB_OUTPUT
+              ;;
+            "multicast")
+              echo "version=${{ needs.monitor.outputs.new_multicast_version }}" >> $GITHUB_OUTPUT
+              ;;
+            "observer")
+              echo "version=${{ needs.monitor.outputs.new_observer_version }}" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+      - name: Process HassIO component
+        run: |
+          component="${{ matrix.component }}"
+          version="${{ steps.get_version.outputs.version }}"
+          SRC_IMAGE="ghcr.io/home-assistant/${{ matrix.arch }}-hassio-${component}"
+          DEST_IMAGE="${{ env.CN_REGISTRY }}/${{ env.CN_REGISTRY_SPACE }}/${{ matrix.arch }}-hassio-${component}"
+
+          echo "Processing $component version $version for ${{ matrix.arch }}"
+          
+          if ! docker pull "${SRC_IMAGE}:${version}"; then
+            echo "::warning::Skipping ${{ matrix.arch }}-hassio-${component}:${version} - image not found"
+            exit 0
+          fi
+
+          docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:${version}"
+          docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:latest"
+
+          if ! docker push "${DEST_IMAGE}:${version}"; then
+            echo "::error::Failed to push ${DEST_IMAGE}:${version}"
+            exit 1
+          fi
+
+          if ! docker push "${DEST_IMAGE}:latest"; then
+            echo "::error::Failed to push ${DEST_IMAGE}:latest"
+            exit 1
+          fi
+
+          docker rmi "${SRC_IMAGE}:${version}" || true
+          echo "::notice::Successfully synced $component:$version for ${{ matrix.arch }}"
