@@ -127,8 +127,8 @@ jobs:
         uses: docker/login-action@v2
         with:
           registry: ${{ env.CN_REGISTRY }}
-          username: ${{ secrets.CN_USERNAME }}
-          password: ${{ secrets.CN_PASSWORD }}
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
 
       - name: Process Home Assistant image
         run: |
@@ -137,7 +137,7 @@ jobs:
           DEST_IMAGE="${{ env.CN_REGISTRY }}/${{ env.CN_REGISTRY_SPACE }}/${{ matrix.arch }}"
 
           echo "Processing ${{ matrix.arch }} version $version"
-          
+
           if ! docker pull "${SRC_IMAGE}:${version}"; then
             echo "::warning::Skipping ${{ matrix.arch }}:${version} - image not found"
             exit 0
@@ -154,7 +154,7 @@ jobs:
 
           docker push "${DEST_IMAGE}:${version}"
           docker push "${DEST_IMAGE}:latest"
-          
+
           if [ "${{ matrix.arch }}" = "home-assistant" ]; then
             docker push "${DEST_IMAGE}:stable"
             docker push "${DEST_IMAGE}:${ym_tag}"
@@ -182,8 +182,8 @@ jobs:
         uses: docker/login-action@v2
         with:
           registry: ${{ env.CN_REGISTRY }}
-          username: ${{ secrets.CN_USERNAME }}
-          password: ${{ secrets.CN_PASSWORD }}
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
 
       - name: Get component version
         id: get_version
@@ -214,7 +214,7 @@ jobs:
           DEST_IMAGE="${{ env.CN_REGISTRY }}/${{ env.CN_REGISTRY_SPACE }}/${{ matrix.arch }}-hassio-${component}"
 
           echo "Processing $component version $version for ${{ matrix.arch }}"
-          
+
           if ! docker pull "${SRC_IMAGE}:${version}"; then
             echo "::warning::Skipping ${{ matrix.arch }}-hassio-${component}:${version} - image not found"
             exit 0
