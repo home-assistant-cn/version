@@ -134,7 +134,7 @@ jobs:
         run: |
           version="${{ needs.monitor.outputs.new_homeassistant_version }}"
           SRC_IMAGE="ghcr.io/home-assistant/${{ matrix.arch }}"
-          DEST_IMAGE="${{ env.CN_REGISTRY }}/${{ env.CN_REGISTRY_SPACE }}/${{ matrix.arch }}"
+          DEST_IMAGE="${{ env.CN_REGISTRY }}/${{ env.CN_NAMESPACE }}/${{ matrix.arch }}"
 
           echo "Processing ${{ matrix.arch }} version $version"
 
@@ -211,7 +211,7 @@ jobs:
           component="${{ matrix.component }}"
           version="${{ steps.get_version.outputs.version }}"
           SRC_IMAGE="ghcr.io/home-assistant/${{ matrix.arch }}-hassio-${component}"
-          DEST_IMAGE="${{ env.CN_REGISTRY }}/${{ env.CN_REGISTRY_SPACE }}/${{ matrix.arch }}-hassio-${component}"
+          DEST_IMAGE="${{ env.CN_REGISTRY }}/${{ env.CN_NAMESPACE }}/${{ matrix.arch }}-hassio-${component}"
 
           echo "Processing $component version $version for ${{ matrix.arch }}"
 
