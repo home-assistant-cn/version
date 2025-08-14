@@ -1,60 +1,60 @@
 {
   "os_list": [
     {
-      "name": "Home Assistant OS 16.0 (RPi 5)",
+      "name": "Home Assistant OS 16.1 (RPi 5)",
       "description": "Open source home automation that puts local control and privacy first.",
-      "url": "https://github.com/home-assistant-cn/operating-system/releases/download/16.0/haos_rpi5-64-16.0.img.xz",
+      "url": "https://github.com/home-assistant-cn/operating-system/releases/download/16.1/haos_rpi5-64-16.1.img.xz",
       "icon": "https://version.home-assistant.xin/brand/logo.png",
       "extract_size": 2147483648,
-      "extract_sha256": "1cef27bd6ecde6274b0777abf1435296926e60e261b28774803d9f6254717134",
-      "release_date": "2025-07-12",
-      "image_download_size": 313405272,
-      "image_download_sha256": "6d87c908ff1339608666002268fe802a42d754e1d35d825fe052e83992301662",
+      "extract_sha256": "85e885749333fd73e6347437d44cbcf484f581c867031f2756cdd8b2f2770ebf",
+      "release_date": "2025-08-14",
+      "image_download_size": 302179880,
+      "image_download_sha256": "38c63013d9e1917765f73c73c7e074888dfca70c6136c8ca946b71fdd748ea12",
       "website": "https://www.home-assistant.io",
       "devices": [
         "pi5-64bit"
       ]
     },
     {
-      "name": "Home Assistant OS 16.0 (RPi 4/400)",
+      "name": "Home Assistant OS 16.1 (RPi 4/400)",
       "description": "Open source home automation that puts local control and privacy first.",
-      "url": "https://github.com/home-assistant-cn/operating-system/releases/download/16.0/haos_rpi4-64-16.0.img.xz",
+      "url": "https://github.com/home-assistant-cn/operating-system/releases/download/16.1/haos_rpi4-64-16.1.img.xz",
       "icon": "https://version.home-assistant.xin/brand/logo.png",
       "extract_size": 2147483648,
-      "extract_sha256": "067d5b97815015d8a51d63d6dc7291f9f3fc42c9f2f822c1af4dc2c0051e3eb5",
-      "release_date": "2025-07-12",
-      "image_download_size": 304250068,
-      "image_download_sha256": "a4828311253e844917df2013c182db5a8a23db55d220afba7e290acf4885a562",
+      "extract_sha256": "3f7f4997b2af730f145d76cbc0b191cfe29d2315d7e05ae32297dc05fff376ca",
+      "release_date": "2025-08-14",
+      "image_download_size": 292649436,
+      "image_download_sha256": "b84e32bf2eacfab146459afec7153da3e1cbbe98c3cfb2030cf78533a3dd8985",
       "website": "https://www.home-assistant.io",
       "devices": [
         "pi4-64bit"
       ]
     },
     {
-      "name": "Home Assistant OS 16.0 (RPi 3)",
+      "name": "Home Assistant OS 16.1 (RPi 3)",
       "description": "Open source home automation that puts local control and privacy first.",
-      "url": "https://github.com/home-assistant-cn/operating-system/releases/download/16.0/haos_rpi3-64-16.0.img.xz",
+      "url": "https://github.com/home-assistant-cn/operating-system/releases/download/16.1/haos_rpi3-64-16.1.img.xz",
       "icon": "https://version.home-assistant.xin/brand/logo.png",
       "extract_size": 2147483648,
-      "extract_sha256": "02ac23fdd4f4257c53bbeb48ff42e57d094a5e4d69b2b7f2177ae73c485881fa",
-      "release_date": "2025-07-12",
-      "image_download_size": 293497080,
-      "image_download_sha256": "fe7cdc673bf3865419d91af8525b545d7364fe4fe2982aef4c6ca3be6054e1c9",
+      "extract_sha256": "d49dbcdfe6321d6a2160ae6c4ce6f0d401e26a2985bdb0ed828709916744fead",
+      "release_date": "2025-08-14",
+      "image_download_size": 281871408,
+      "image_download_sha256": "ac83b3c30c7807c639f7c3ecb8386eb483405413a92aad4bd13f9c7309722184",
       "website": "https://www.home-assistant.io",
       "devices": [
         "pi3-64bit"
       ]
     },
     {
-      "name": "Home Assistant OS 16.0 (Yellow)",
+      "name": "Home Assistant OS 16.1 (Yellow)",
       "description": "Home Assistant OS for Home Assistant Yellow. To be flashed directly to an NVMe drive or the Compute Module on Yellow (using rpiboot).",
-      "url": "https://github.com/home-assistant-cn/operating-system/releases/download/16.0/haos_yellow-16.0.img.xz",
+      "url": "https://github.com/home-assistant-cn/operating-system/releases/download/16.1/haos_yellow-16.1.img.xz",
       "icon": "https://version.home-assistant.xin/rpi-imager-yellow-installer.png",
       "extract_size": 2147483648,
-      "extract_sha256": "dd0b9d55c991d56d3c4b4550ed62addab28e422084660c98a0c4e7041bb649be",
-      "release_date": "2025-07-12",
-      "image_download_size": 303727328,
-      "image_download_sha256": "ff3177c6f667f9fcacdaf91825409064b6e8f905dd5b4d99bf057efff039c316",
+      "extract_sha256": "01074c163faeef29777cbe8756fb23a42e1bababcc7eb8fd88fcb3375b0fb2a3",
+      "release_date": "2025-08-14",
+      "image_download_size": 293185368,
+      "image_download_sha256": "ae873af3e32b146bb68547b25461819412665be82b0d2118676b3917f166dc34",
       "website": "https://yellow.home-assistant.io",
       "devices": [
         "pi4-64bit",
