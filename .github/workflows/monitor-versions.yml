@@ -27,7 +27,7 @@ jobs:
       new_observer_version: ${{ steps.compare.outputs.new_observer_version }}
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v5
       with:
         fetch-depth: 2
 
@@ -121,7 +121,7 @@ jobs:
           - 'yellow-homeassistant'
           - 'green-homeassistant'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Login to Registry
         uses: docker/login-action@v2
@@ -176,7 +176,7 @@ jobs:
           - ${{ fromJSON(needs.monitor.outputs.observer_version_changed == 'true' && '["observer"]' || '[]') }}
         arch: ['amd64', 'i386', 'armhf', 'armv7', 'aarch64']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Login to Registry
         uses: docker/login-action@v2
