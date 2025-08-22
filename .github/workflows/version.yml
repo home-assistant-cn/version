@@ -90,7 +90,7 @@ jobs:
         run: |
           if [ -f "${{ matrix.path }}" ]; then
             # Replace the domain in the file
-            sed -i 's/os-artifacts.home-assistant.io/os-artifacts.home-assistant.xin/g' "${{ matrix.path }}"
+            sed -i 's/os-artifacts.home-assistant.io/os-artifacts.home-assistant.io/g' "${{ matrix.path }}"
             echo "Modified ${{ matrix.path }} to use new domain"
           else
             echo "File ${{ matrix.path }} not found"
