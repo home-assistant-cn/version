@@ -1,1 +1,1 @@
-/home/yideshi/Home-Assistant-cn/version/apparmor_stable.txt
+apparmor_stable.txt
