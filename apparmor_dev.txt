@@ -1,0 +1,80 @@
+abi <abi/3.0>,
+
+#include <tunables/global>
+
+profile hassio-supervisor flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/python>
+
+  dbus,
+
+  network unix stream,
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+
+  signal (send) set=(kill,term,int,hup,cont),
+
+  capability net_admin,
+  capability net_bind_service,
+  capability dac_read_search,
+  capability dac_override,
+  capability chown,
+
+  /bin/** ix,
+  /usr/bin/** ix,
+  /bin/udevadm Ux,
+  /sbin/udevd Ux,
+  /usr/local/bin/python* ix,
+  /usr/bin/git cx,
+  /usr/lib/bashio/** ix,
+  /etc/s6/** ix,
+  /run/{s6,s6-rc*,service}/** ix,
+  /package/** ix,
+  /command/** ix,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+
+  deny /proc/** wl,
+  deny /sys/** wl,
+
+  / r,
+  /** r,
+  /tmp/** rwk,
+  /data/** rw,
+  /run/{,**} rwk,
+  /dev/tty rw,
+  /root/.cas/{,**} rwk,
+  /etc/resolv.conf rw,
+  /run/docker.sock rw,
+
+  /usr/local/lib/** mr,
+
+  profile /usr/bin/git flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    network,
+    deny network raw,
+
+    signal (receive) set=(term),
+
+    /bin/busybox ix,
+    /usr/bin/git mrix,
+    /usr/libexec/git-core/* ix,
+
+    deny /data/homeassistant rw,
+    deny /data/ssl rw,
+
+    /** r,
+    /lib/* mr,
+    /data/addons/** lrw,
+    /data/apps/** lrw,
+    /data/tmp/** lrw,
+    /usr/local/lib/** mr,
+
+    capability dac_override,
+  }
+}
