@@ -113,7 +113,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          aws s3 sync . s3://version.home-assistant.xin --exclude "*" --include "${{ matrix.path }}.sig"
+          aws s3 sync . s3://version.smart-assistant.cn --exclude "*" --include "${{ matrix.path }}.sig"
 
 
   upload:
@@ -141,7 +141,7 @@ jobs:
       run: |
         for file in ${{ needs.prepare.outputs.files }}; do
           if [[ "$file" =~ \.txt|\.json|\.png ]]; then
-            aws s3 sync . s3://version.home-assistant.xin --exclude "*" --include "$file"
+            aws s3 sync . s3://version.smart-assistant.cn --exclude "*" --include "$file"
           fi
         done
 
@@ -151,9 +151,9 @@ jobs:
         declare -a files
         for file in ${{ needs.prepare.outputs.files }}; do
           if [[ "$file" =~ \.txt|\.json ]]; then
-            files+=("\"https:\/\/version.home-assistant.xin\/$file\", ")
+            files+=("\"https:\/\/version.smart-assistant.cn\/$file\", ")
             if [[ "${{ env.SIGNED_FILES }}" =~ $file ]]; then
-              files+=("\"https:\/\/version.home-assistant.xin\/$file.sig\", ")
+              files+=("\"https:\/\/version.smart-assistant.cn\/$file.sig\", ")
             fi
           fi
         done

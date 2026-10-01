@@ -2,184 +2,229 @@ name: Monitor and Sync Home Assistant Versions
 
 on:
   push:
+    branches: ["master"]
     paths:
       - 'stable.json'
-
+  workflow_dispatch:
+    inputs:
+      custom_target:
+        description: '同步目标'
+        type: choice
+        options:
+          - homeassistant
+          - cli
+          - dns
+          - audio
+          - multicast
+          - observer
+          - supervisor
+        default: cli
+      custom_version:
+        description: '版本号（必填，如 2026.06.0）'
+        type: string
+        default: ''
 env:
   CN_REGISTRY: ${{ secrets.CN_REGISTRY }}
   CN_NAMESPACE: ${{ secrets.CN_REGISTRY_SPACE }}
 
+permissions:
+  contents: read
+
+concurrency:
+  group: monitor-versions-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   monitor:
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     outputs:
-      homeassistant_version_changed: ${{ steps.compare.outputs.homeassistant_version_changed }}
-      new_homeassistant_version: ${{ steps.compare.outputs.new_homeassistant_version }}
-      cli_version_changed: ${{ steps.compare.outputs.cli_version_changed }}
-      new_cli_version: ${{ steps.compare.outputs.new_cli_version }}
-      dns_version_changed: ${{ steps.compare.outputs.dns_version_changed }}
-      new_dns_version: ${{ steps.compare.outputs.new_dns_version }}
-      audio_version_changed: ${{ steps.compare.outputs.audio_version_changed }}
-      new_audio_version: ${{ steps.compare.outputs.new_audio_version }}
-      multicast_version_changed: ${{ steps.compare.outputs.multicast_version_changed }}
-      new_multicast_version: ${{ steps.compare.outputs.new_multicast_version }}
-      observer_version_changed: ${{ steps.compare.outputs.observer_version_changed }}
-      new_observer_version: ${{ steps.compare.outputs.new_observer_version }}
+      changed_machines: ${{ steps.compare.outputs.changed_machines }}
+      homeassistant_changed: ${{ steps.compare.outputs.homeassistant_changed }}
+      component_names: ${{ steps.compare.outputs.component_names }}
+      components_changed: ${{ steps.compare.outputs.components_changed }}
+      supervisor_changed: ${{ steps.compare.outputs.supervisor_changed }}
+      new_supervisor_version: ${{ steps.compare.outputs.new_supervisor_version }}
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 2
 
     - name: Compare versions
       id: compare
       run: |
+        set -euo pipefail
+
         CURRENT=$(cat stable.json)
-        PREVIOUS=$(git show HEAD^:stable.json 2>/dev/null || echo "{}")
+        PREVIOUS=$(git show HEAD^:stable.json 2>/dev/null || echo '{}')
 
-        extract_version() {
-          echo "$1" | jq -r "$2" || echo ""
-        }
+        # Per-machine Home Assistant version comparison.
+        # stable.json pins specific versions per machine (e.g. qemux86 may lag
+        # behind default); only machines whose value actually changed need syncing.
+        CHANGED_MACHINES=$(jq -nc '
+          ($cur.homeassistant // {}) as $c
+          | ($prev.homeassistant // {}) as $p
+          | $c | to_entries
+          | map(select(
+              (.value | type) == "string"
+              and .value != ""
+              and .value != ($p[.key] // null)
+            )
+            | {machine: .key, version: .value}
+          )
+        ' --argjson cur "$CURRENT" --argjson prev "$PREVIOUS")
 
-        CURRENT_HA=$(extract_version "$CURRENT" '.homeassistant.default')
-        CURRENT_CLI=$(extract_version "$CURRENT" '.cli')
-        CURRENT_DNS=$(extract_version "$CURRENT" '.dns')
-        CURRENT_AUDIO=$(extract_version "$CURRENT" '.audio')
-        CURRENT_MULTICAST=$(extract_version "$CURRENT" '.multicast')
-        CURRENT_OBSERVER=$(extract_version "$CURRENT" '.observer')
-
-        PREVIOUS_HA=$(extract_version "$PREVIOUS" '.homeassistant.default')
-        PREVIOUS_CLI=$(extract_version "$PREVIOUS" '.cli')
-        PREVIOUS_DNS=$(extract_version "$PREVIOUS" '.dns')
-        PREVIOUS_AUDIO=$(extract_version "$PREVIOUS" '.audio')
-        PREVIOUS_MULTICAST=$(extract_version "$PREVIOUS" '.multicast')
-        PREVIOUS_OBSERVER=$(extract_version "$PREVIOUS" '.observer')
-
-        if [ "$CURRENT_HA" != "$PREVIOUS_HA" ] && [ -n "$CURRENT_HA" ]; then
-          echo "homeassistant_version_changed=true" >> $GITHUB_OUTPUT
-          echo "new_homeassistant_version=$CURRENT_HA" >> $GITHUB_OUTPUT
+        HA_CHANGED=false
+        if [ "$(printf '%s' "$CHANGED_MACHINES" | jq 'length')" -gt 0 ]; then
+          HA_CHANGED=true
         fi
 
-        if [ "$CURRENT_CLI" != "$PREVIOUS_CLI" ] && [ -n "$CURRENT_CLI" ]; then
-          echo "cli_version_changed=true" >> $GITHUB_OUTPUT
-          echo "new_cli_version=$CURRENT_CLI" >> $GITHUB_OUTPUT
+        # HassIO component comparison (top-level fields: cli, dns, audio,
+        # multicast, observer). Each has a single version across all arches.
+        COMPONENT_NAMES=$(jq -nc '
+          ["cli","dns","audio","multicast","observer"] as $keys
+          | $keys
+          | map(select(
+              ($cur[.] // null) != ($prev[.] // null)
+              and ($cur[.] | type) == "string"
+            ))
+        ' --argjson cur "$CURRENT" --argjson prev "$PREVIOUS")
+
+        COMPONENTS_CHANGED=false
+        if [ "$(printf '%s' "$COMPONENT_NAMES" | jq 'length')" -gt 0 ]; then
+          COMPONENTS_CHANGED=true
         fi
 
-        if [ "$CURRENT_DNS" != "$PREVIOUS_DNS" ] && [ -n "$CURRENT_DNS" ]; then
-          echo "dns_version_changed=true" >> $GITHUB_OUTPUT
-          echo "new_dns_version=$CURRENT_DNS" >> $GITHUB_OUTPUT
+        # Supervisor version comparison (top-level field).
+        # supervisor is self-built in the supervisor repo and pushed to
+        # ghcr.io/home-assistant-cn/<arch>-hassio-supervisor. builder.yml's
+        # version job updates this field AFTER the image is published, so when
+        # this workflow triggers the upstream image is already available.
+        CURRENT_SUPERVISOR=$(jq -r '.supervisor // empty' <<< "$CURRENT")
+        PREVIOUS_SUPERVISOR=$(jq -r '.supervisor // empty' <<< "$PREVIOUS")
+        SUPERVISOR_CHANGED=false
+        NEW_SUPERVISOR=""
+        if [ -n "$CURRENT_SUPERVISOR" ] && [ "$CURRENT_SUPERVISOR" != "$PREVIOUS_SUPERVISOR" ]; then
+          SUPERVISOR_CHANGED=true
+          NEW_SUPERVISOR="$CURRENT_SUPERVISOR"
         fi
 
-        if [ "$CURRENT_AUDIO" != "$PREVIOUS_AUDIO" ] && [ -n "$CURRENT_AUDIO" ]; then
-          echo "audio_version_changed=true" >> $GITHUB_OUTPUT
-          echo "new_audio_version=$CURRENT_AUDIO" >> $GITHUB_OUTPUT
-        fi
+        {
+          echo "changed_machines=${CHANGED_MACHINES}"
+          echo "homeassistant_changed=${HA_CHANGED}"
+          echo "component_names=${COMPONENT_NAMES}"
+          echo "components_changed=${COMPONENTS_CHANGED}"
+          echo "supervisor_changed=${SUPERVISOR_CHANGED}"
+          echo "new_supervisor_version=${NEW_SUPERVISOR}"
+        } >> "$GITHUB_OUTPUT"
 
-        if [ "$CURRENT_MULTICAST" != "$PREVIOUS_MULTICAST" ] && [ -n "$CURRENT_MULTICAST" ]; then
-          echo "multicast_version_changed=true" >> $GITHUB_OUTPUT
-          echo "new_multicast_version=$CURRENT_MULTICAST" >> $GITHUB_OUTPUT
-        fi
-
-        if [ "$CURRENT_OBSERVER" != "$PREVIOUS_OBSERVER" ] && [ -n "$CURRENT_OBSERVER" ]; then
-          echo "observer_version_changed=true" >> $GITHUB_OUTPUT
-          echo "new_observer_version=$CURRENT_OBSERVER" >> $GITHUB_OUTPUT
+        echo "::notice::Changed machines: ${CHANGED_MACHINES}"
+        echo "::notice::Changed components: ${COMPONENT_NAMES}"
+        if [ "$SUPERVISOR_CHANGED" = "true" ]; then
+          echo "::notice::Changed supervisor: ${NEW_SUPERVISOR}"
         fi
 
   sync_homeassistant:
     needs: monitor
-    if: ${{ needs.monitor.outputs.homeassistant_version_changed == 'true' }}
+    if: ${{ needs.monitor.outputs.homeassistant_changed == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
+      max-parallel: 5
       matrix:
-        arch:
-          - 'home-assistant'
-          - 'amd64-homeassistant'
-          - 'i386-homeassistant'
-          - 'armhf-homeassistant'
-          - 'armv7-homeassistant'
-          - 'aarch64-homeassistant'
-          - 'generic-x86-64-homeassistant'
-          - 'intel-nuc-homeassistant'
-          - 'khadas-vim3-homeassistant'
-          - 'odroid-c2-homeassistant'
-          - 'odroid-c4-homeassistant'
-          - 'odroid-m1-homeassistant'
-          - 'odroid-n2-homeassistant'
-          - 'odroid-xu-homeassistant'
-          - 'qemuarm-homeassistant'
-          - 'qemuarm-64-homeassistant'
-          - 'qemux86-homeassistant'
-          - 'qemux86-64-homeassistant'
-          - 'raspberrypi-homeassistant'
-          - 'raspberrypi2-homeassistant'
-          - 'raspberrypi3-homeassistant'
-          - 'raspberrypi3-64-homeassistant'
-          - 'raspberrypi4-homeassistant'
-          - 'raspberrypi4-64-homeassistant'
-          - 'raspberrypi5-64-homeassistant'
-          - 'tinker-homeassistant'
-          - 'yellow-homeassistant'
-          - 'green-homeassistant'
+        include: ${{ fromJSON(needs.monitor.outputs.changed_machines) }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Login to Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.CN_REGISTRY }}
           username: ${{ secrets.CN_REGISTRY_USERNAME }}
           password: ${{ secrets.CN_REGISTRY_PASSWORD }}
 
       - name: Process Home Assistant image
+        env:
+          MACHINE: ${{ matrix.machine }}
+          VERSION: ${{ matrix.version }}
         run: |
-          version="${{ needs.monitor.outputs.new_homeassistant_version }}"
-          SRC_IMAGE="ghcr.io/home-assistant/${{ matrix.arch }}"
-          DEST_IMAGE="${{ env.CN_REGISTRY }}/${{ env.CN_NAMESPACE }}/${{ matrix.arch }}"
+          set -euo pipefail
 
-          echo "Processing ${{ matrix.arch }} version $version"
+          machine="$MACHINE"
+          version="$VERSION"
 
-          if ! docker pull "${SRC_IMAGE}:${version}"; then
-            echo "::warning::Skipping ${{ matrix.arch }}:${version} - image not found"
-            exit 0
+          if [ "$machine" = "default" ]; then
+            image_name="home-assistant"
+          else
+            image_name="${machine}-homeassistant"
           fi
 
-          docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:${version}"
-          docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:latest"
+          SRC_IMAGE="ghcr.io/home-assistant/${image_name}"
+          DEST_IMAGE="${CN_REGISTRY}/${CN_NAMESPACE}/${image_name}"
 
-          if [ "${{ matrix.arch }}" = "home-assistant" ]; then
+          echo "Processing ${image_name} version ${version}"
+
+          # Determine platform: x86 machines → amd64, ARM machines → arm64
+          case "$machine" in
+            default|generic-x86-64|intel-nuc|qemux86-64)
+              platform="linux/amd64" ;;
+            *)
+              platform="linux/arm64" ;;
+          esac
+
+          pull_ok=false
+          for i in 1 2; do
+            if docker pull --platform "$platform" "${SRC_IMAGE}:${version}"; then
+              pull_ok=true
+              break
+            fi
+            echo "::warning::Pull attempt ${i} failed for ${SRC_IMAGE}:${version}, retrying in 3s"
+            sleep 3
+          done
+
+          if [ "$pull_ok" != "true" ]; then
+            echo "::error::Image not found after retries: ${SRC_IMAGE}:${version}"
+            exit 1
+          fi
+
+          # Build tag list: all machines get version + stable; default
+          # additionally gets latest + YYYY.M.
+          tags=("${version}" "stable")
+          if [ "$machine" = "default" ]; then
             ym_tag=$(echo "${version}" | awk -F. '{print $1"."$2}')
-            docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:stable"
-            docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:${ym_tag}"
+            tags+=("latest" "${ym_tag}")
           fi
 
-          docker push "${DEST_IMAGE}:${version}"
-          docker push "${DEST_IMAGE}:latest"
+          for tag in "${tags[@]}"; do
+            docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:${tag}"
+            if ! docker push "${DEST_IMAGE}:${tag}"; then
+              sleep 3
+              if ! docker push "${DEST_IMAGE}:${tag}"; then
+                echo "::error::Failed to push ${DEST_IMAGE}:${tag}"
+                exit 1
+              fi
+            fi
+          done
 
-          if [ "${{ matrix.arch }}" = "home-assistant" ]; then
-            docker push "${DEST_IMAGE}:stable"
-            docker push "${DEST_IMAGE}:${ym_tag}"
-          fi
-
-          docker rmi "${SRC_IMAGE}:${version}" || true
-          echo "::notice::Successfully synced ${{ matrix.arch }}:$version"
+          echo "::notice::Successfully synced ${image_name}:${version}"
 
   sync_hassio_components:
     needs: monitor
+    if: ${{ needs.monitor.outputs.components_changed == 'true' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
+      fail-fast: false
+      max-parallel: 5
       matrix:
-        component:
-          - ${{ fromJSON(needs.monitor.outputs.cli_version_changed == 'true' && '["cli"]' || '[]') }}
-          - ${{ fromJSON(needs.monitor.outputs.dns_version_changed == 'true' && '["dns"]' || '[]') }}
-          - ${{ fromJSON(needs.monitor.outputs.audio_version_changed == 'true' && '["audio"]' || '[]') }}
-          - ${{ fromJSON(needs.monitor.outputs.multicast_version_changed == 'true' && '["multicast"]' || '[]') }}
-          - ${{ fromJSON(needs.monitor.outputs.observer_version_changed == 'true' && '["observer"]' || '[]') }}
-        arch: ['amd64', 'i386', 'armhf', 'armv7', 'aarch64']
+        arch: ['amd64', 'aarch64']
+        component: ${{ fromJSON(needs.monitor.outputs.component_names) }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Login to Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.CN_REGISTRY }}
           username: ${{ secrets.CN_REGISTRY_USERNAME }}
@@ -187,51 +232,284 @@ jobs:
 
       - name: Get component version
         id: get_version
+        env:
+          COMPONENT: ${{ matrix.component }}
         run: |
-          case "${{ matrix.component }}" in
-            "cli")
-              echo "version=${{ needs.monitor.outputs.new_cli_version }}" >> $GITHUB_OUTPUT
-              ;;
-            "dns")
-              echo "version=${{ needs.monitor.outputs.new_dns_version }}" >> $GITHUB_OUTPUT
-              ;;
-            "audio")
-              echo "version=${{ needs.monitor.outputs.new_audio_version }}" >> $GITHUB_OUTPUT
-              ;;
-            "multicast")
-              echo "version=${{ needs.monitor.outputs.new_multicast_version }}" >> $GITHUB_OUTPUT
-              ;;
-            "observer")
-              echo "version=${{ needs.monitor.outputs.new_observer_version }}" >> $GITHUB_OUTPUT
-              ;;
-          esac
+          set -euo pipefail
+          component="$COMPONENT"
+          version=$(jq -r --arg c "$component" '.[$c]' stable.json)
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::Version not found for component ${component}"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Process HassIO component
+        env:
+          COMPONENT: ${{ matrix.component }}
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.get_version.outputs.version }}
         run: |
-          component="${{ matrix.component }}"
-          version="${{ steps.get_version.outputs.version }}"
-          SRC_IMAGE="ghcr.io/home-assistant/${{ matrix.arch }}-hassio-${component}"
-          DEST_IMAGE="${{ env.CN_REGISTRY }}/${{ env.CN_NAMESPACE }}/${{ matrix.arch }}-hassio-${component}"
+          set -euo pipefail
 
-          echo "Processing $component version $version for ${{ matrix.arch }}"
+          component="$COMPONENT"
+          version="$VERSION"
+          SRC_IMAGE="ghcr.io/home-assistant/${ARCH}-hassio-${component}"
+          DEST_IMAGE="${CN_REGISTRY}/${CN_NAMESPACE}/${ARCH}-hassio-${component}"
 
-          if ! docker pull "${SRC_IMAGE}:${version}"; then
-            echo "::warning::Skipping ${{ matrix.arch }}-hassio-${component}:${version} - image not found"
-            exit 0
-          fi
+          echo "Processing ${component} version ${version} for ${ARCH}"
 
-          docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:${version}"
-          docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:latest"
+          case "$ARCH" in
+            amd64) platform="linux/amd64" ;;
+            aarch64) platform="linux/arm64" ;;
+          esac
 
-          if ! docker push "${DEST_IMAGE}:${version}"; then
-            echo "::error::Failed to push ${DEST_IMAGE}:${version}"
+          pull_ok=false
+          for i in 1 2; do
+            if docker pull --platform "$platform" "${SRC_IMAGE}:${version}"; then
+              pull_ok=true
+              break
+            fi
+            echo "::warning::Pull attempt ${i} failed for ${SRC_IMAGE}:${version}, retrying in 3s"
+            sleep 3
+          done
+
+          if [ "$pull_ok" != "true" ]; then
+            echo "::error::Image not found after retries: ${SRC_IMAGE}:${version}"
             exit 1
           fi
 
-          if ! docker push "${DEST_IMAGE}:latest"; then
-            echo "::error::Failed to push ${DEST_IMAGE}:latest"
+          tags=("${version}" "latest")
+          for tag in "${tags[@]}"; do
+            docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:${tag}"
+            if ! docker push "${DEST_IMAGE}:${tag}"; then
+              sleep 3
+              if ! docker push "${DEST_IMAGE}:${tag}"; then
+                echo "::error::Failed to push ${DEST_IMAGE}:${tag}"
+                exit 1
+              fi
+            fi
+          done
+
+          echo "::notice::Successfully synced ${component}:${version} for ${ARCH}"
+
+  sync_supervisor:
+    needs: monitor
+    if: ${{ needs.monitor.outputs.supervisor_changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        arch: ['amd64', 'aarch64']
+    steps:
+      - name: Login to Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.CN_REGISTRY }}
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
+
+      - name: Process Supervisor image
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.monitor.outputs.new_supervisor_version }}
+        run: |
+          set -euo pipefail
+
+          version="$VERSION"
+          # supervisor is self-built and published to the home-assistant-cn
+          # ghcr namespace (not the official home-assistant namespace). The
+          # package is public, so no ghcr login is required to pull.
+          SRC_IMAGE="ghcr.io/home-assistant-cn/${ARCH}-hassio-supervisor"
+          DEST_IMAGE="${CN_REGISTRY}/${CN_NAMESPACE}/${ARCH}-hassio-supervisor"
+
+          echo "Processing supervisor ${ARCH} version ${version}"
+
+          case "$ARCH" in
+            amd64) platform="linux/amd64" ;;
+            aarch64) platform="linux/arm64" ;;
+          esac
+
+          pull_ok=false
+          for i in 1 2; do
+            if docker pull --platform "$platform" "${SRC_IMAGE}:${version}"; then
+              pull_ok=true
+              break
+            fi
+            echo "::warning::Pull attempt ${i} failed for ${SRC_IMAGE}:${version}, retrying in 3s"
+            sleep 3
+          done
+
+          if [ "$pull_ok" != "true" ]; then
+            echo "::error::Image not found after retries: ${SRC_IMAGE}:${version}"
             exit 1
           fi
 
-          docker rmi "${SRC_IMAGE}:${version}" || true
-          echo "::notice::Successfully synced $component:$version for ${{ matrix.arch }}"
+          tags=("${version}" "latest")
+          for tag in "${tags[@]}"; do
+            docker tag "${SRC_IMAGE}:${version}" "${DEST_IMAGE}:${tag}"
+            if ! docker push "${DEST_IMAGE}:${tag}"; then
+              sleep 3
+              if ! docker push "${DEST_IMAGE}:${tag}"; then
+                echo "::error::Failed to push ${DEST_IMAGE}:${tag}"
+                exit 1
+              fi
+            fi
+          done
+
+          echo "::notice::Successfully synced supervisor:${version} for ${ARCH}"
+
+  prepare_custom:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    outputs:
+      custom_matrix: ${{ steps.set_matrix.outputs.custom_matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build matrix
+        id: set_matrix
+        env:
+          TARGET: ${{ inputs.custom_target }}
+          VERSION: ${{ inputs.custom_version }}
+        run: |
+          set -euo pipefail
+          target="$TARGET"
+          version="$VERSION"
+          if [ -z "$version" ]; then
+            echo "::error::custom_version is required (version number cannot be empty)"
+            exit 1
+          fi
+          case "$target" in
+            homeassistant)
+              # One matrix entry per machine in stable.json.
+              custom_matrix=$(jq -c --arg v "$version" \
+                '[.homeassistant | keys[] | {machine: ., version: $v}]' stable.json)
+              ;;
+            cli|dns|audio|multicast|observer|supervisor)
+              # One matrix entry per arch.
+              custom_matrix=$(jq -nc --arg v "$version" \
+                '["amd64","aarch64"] | map({arch: ., version: $v})')
+              ;;
+            *)
+              echo "::error::Unknown custom_target: ${target}"
+              exit 1
+              ;;
+          esac
+          echo "custom_matrix=${custom_matrix}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Matrix: ${custom_matrix}"
+
+  sync_custom:
+    needs: prepare_custom
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include: ${{ fromJSON(needs.prepare_custom.outputs.custom_matrix) }}
+    steps:
+      - name: Login to Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.CN_REGISTRY }}
+          username: ${{ secrets.CN_REGISTRY_USERNAME }}
+          password: ${{ secrets.CN_REGISTRY_PASSWORD }}
+
+      - name: Sync image
+        env:
+          TARGET: ${{ inputs.custom_target }}
+          VERSION: ${{ matrix.version }}
+          MACHINE: ${{ matrix.machine }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          target="$TARGET"
+          version="$VERSION"
+          machine="$MACHINE"
+          arch="$ARCH"
+
+          # Pull with retry, tag all labels, push all.
+          sync_one() {
+            local src="$1" dest="$2" ver="$3" platform="$4"
+            shift 4
+            local tags=("$@")
+
+            echo "::notice::Syncing ${src}:${ver} -> ${dest}"
+
+            pull_ok=false
+            for i in 1 2; do
+              if docker pull --platform "$platform" "${src}:${ver}"; then
+                pull_ok=true
+                break
+              fi
+              echo "::warning::Pull attempt ${i} failed for ${src}:${ver}, retrying in 3s"
+              sleep 3
+            done
+
+            if [ "$pull_ok" != "true" ]; then
+              echo "::error::Image not found after retries: ${src}:${ver}"
+              return 1
+            fi
+
+            for tag in "${tags[@]}"; do
+              docker tag "${src}:${ver}" "${dest}:${tag}"
+              if ! docker push "${dest}:${tag}"; then
+                sleep 3
+                if ! docker push "${dest}:${tag}"; then
+                  echo "::error::Failed to push ${dest}:${tag}"
+                  return 1
+                fi
+              fi
+            done
+
+            echo "::notice::Successfully synced ${dest}:${ver}"
+          }
+
+          # Determine platform for docker pull
+          case "$target" in
+            homeassistant)
+              case "$machine" in
+                default|generic-x86-64|intel-nuc|qemux86-64) platform="linux/amd64" ;;
+                *) platform="linux/arm64" ;;
+              esac
+              if [ "$machine" = "default" ]; then
+                image_name="home-assistant"
+              else
+                image_name="${machine}-homeassistant"
+              fi
+              src="ghcr.io/home-assistant/${image_name}"
+              dest="${CN_REGISTRY}/${CN_NAMESPACE}/${image_name}"
+              if [ "$machine" = "default" ]; then
+                ym_tag=$(echo "${version}" | awk -F. '{print $1"."$2}')
+                sync_one "$src" "$dest" "$version" "$platform" "${version}" "stable" "latest" "${ym_tag}" \
+                  || echo "::warning::Skipped ${image_name}:${version} (image not available)"
+              else
+                sync_one "$src" "$dest" "$version" "$platform" "${version}" "stable" \
+                  || echo "::warning::Skipped ${image_name}:${version} (image not available)"
+              fi
+              ;;
+            cli|dns|audio|multicast|observer)
+              case "$arch" in
+                amd64) platform="linux/amd64" ;;
+                aarch64) platform="linux/arm64" ;;
+              esac
+              src="ghcr.io/home-assistant/${arch}-hassio-${target}"
+              dest="${CN_REGISTRY}/${CN_NAMESPACE}/${arch}-hassio-${target}"
+              sync_one "$src" "$dest" "$version" "$platform" "${version}" "latest"
+              ;;
+            supervisor)
+              case "$arch" in
+                amd64) platform="linux/amd64" ;;
+                aarch64) platform="linux/arm64" ;;
+              esac
+              src="ghcr.io/home-assistant-cn/${arch}-hassio-supervisor"
+              dest="${CN_REGISTRY}/${CN_NAMESPACE}/${arch}-hassio-supervisor"
+              sync_one "$src" "$dest" "$version" "$platform" "${version}" "latest"
+              ;;
+          esac

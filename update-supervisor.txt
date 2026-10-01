@@ -1,6 +1,6 @@
 #!/bin/sh
 
-version=$(curl -s https://version.home-assistant.xin/stable.json | jq -r '.supervisor // "latest"' || echo "latest")
+version=$(curl -s https://version.smart-assistant.cn/stable.json | jq -r '.supervisor // "latest"' || echo "latest")
 arch=$(docker image ls | grep -- '-hassio-observer'  | awk '{print $1}' | awk -F/ '{print $3}' | awk -F- '{print $1}')
 
 docker pull "ghcr.io/home-assistant-cn/${arch}-hassio-supervisor:${version}"
